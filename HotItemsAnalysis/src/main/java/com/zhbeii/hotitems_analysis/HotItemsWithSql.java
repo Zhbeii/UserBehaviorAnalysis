@@ -18,7 +18,6 @@ import org.apache.flink.types.Row;
 public class HotItemsWithSql {
 
 
-
     public static void main(String[] args) throws Exception {
         //1. 创建执行环境
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -28,11 +27,11 @@ public class HotItemsWithSql {
         env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
         //2. 读取数据,创建DataStream
-       DataStream<String> inputStream = env.readTextFile("D:\\Program\\workspace\\spark\\UserBehaviorAnalysis\\HotItemsAnalysis\\src\\main\\resources\\UserBehavior.csv");
+        DataStream<String> inputStream = env.readTextFile("D:\\Program\\workspace\\spark\\UserBehaviorAnalysis\\HotItemsAnalysis\\src\\main\\resources\\UserBehavior.csv");
 
         //3. 转换为POJO,分配时间戳和watermark
         DataStream<UserBehavior> dataStream = inputStream
-                .map( line ->{
+                .map(line -> {
                     String[] fields = line.split(",");
                     return new UserBehavior(
                             new Long(fields[0]),
@@ -67,7 +66,7 @@ public class HotItemsWithSql {
         //6.分组开窗
         //table api
         Table windowAggTable = dataTable
-                .filter("behavior = 'pv")  //算子对每个元素进行过滤，过滤的过程使用一个filter函数进行逻辑判断。对于输入的每个元素，如果filter函数返回True，则保留，如果返回False，则丢弃。
+                .filter("behavior = 'pv'")  //算子对每个元素进行过滤，过滤的过程使用一个filter函数进行逻辑判断。对于输入的每个元素，如果filter函数返回True，则保留，如果返回False，则丢弃。
                 .window(Slide.over("1.hours").every("5.minutes").on("ts").as("w"))    //开一个滑动窗口
                 .groupBy("itemId, w")
                 .select("itemId, w.end as windowEnd, itemId.count as cnt");
@@ -76,16 +75,27 @@ public class HotItemsWithSql {
         //SQL
         DataStream<Row> aggStream = tableEnv.toAppendStream(windowAggTable, Row.class);
         tableEnv.createTemporaryView("agg", aggStream, "itemId, windowEnd, cnt");
+        Table resultTable = tableEnv.sqlQuery("select * from " +
+                "(select * ,ROW_NUMBER() over(partition by windowEnd order by cnt desc) as row_num" +
+                " from agg)" +
+                "where row_num <= 5 ");
 
-        Table resulttable = tableEnv.sqlQuery("select * from" +
-                "(select * ,ROW_NUMBER() over(partition by windowEnd order by cnt desc)as row_num" +
-                "from agg)" +
-                "where row _num <= 5");
+        // 纯SQL实现
+        tableEnv.createTemporaryView("data_table", dataStream, "itemId, behavior, timestamp.rowtime as ts");
+        Table resultSqlTable = tableEnv.sqlQuery("select * from " +
+                "  ( select *, ROW_NUMBER() over (partition by windowEnd order by cnt desc) as row_num " +
+                "  from ( " +
+                "    select itemId, count(itemId) as cnt, HOP_END(ts, interval '5' minute, interval '1' hour) as windowEnd " +
+                "    from data_table " +
+                "    where behavior = 'pv' " +
+                "    group by itemId, HOP(ts, interval '5' minute, interval '1' hour)" +
+                "    )" +
+                "  ) " +
+                " where row_num <= 5 ");
 
-        tableEnv.toRetractStream(resulttable, Row.class).print();
 
+//        tableEnv.toRetractStream(resultTable, Row.class).print();
+        tableEnv.toRetractStream(resultSqlTable, Row.class).print();
         env.execute("hot items with sql job");
-
-
     }
 }
