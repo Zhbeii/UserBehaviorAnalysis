@@ -6,6 +6,7 @@ package com.zhbeii.hotitems_analysis;/*
 import com.sun.org.apache.xml.internal.resolver.helpers.PublicId;
 import com.zhbeii.hotitems_analysis.beans.ItemViewCount;
 import com.zhbeii.hotitems_analysis.beans.UserBehavior;
+import org.apache.commons.compress.utils.Lists;
 import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
@@ -22,6 +23,7 @@ import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 
 public class HotItems {
     public static void main(String[] args) throws Exception{
@@ -143,7 +145,14 @@ public class HotItems {
         @Override
         public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
             //定时触发器,当前已收集到所有数据,排序输出
+            ArrayList<ItemViewCount> itemViewCounts = Lists.newArrayList(itemViewCountListState.get().iterator());
 
+            itemViewCounts.sort(new Comparator<ItemViewCount>() {
+                @Override
+                public int compare(ItemViewCount o1, ItemViewCount o2) {
+                    return o2.getCount().intValue() - o1.getCount().intValue();
+                }
+            });
         }
     }
 }
