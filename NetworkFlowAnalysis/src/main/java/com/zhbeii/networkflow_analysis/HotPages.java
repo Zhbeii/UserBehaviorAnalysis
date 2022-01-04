@@ -44,7 +44,7 @@ public class HotPages {
 
         //分组开窗聚合
         dataStream.filter( data -> "GET".equals(data.getMethod()) )    //过滤GET请求
-        .keyBy()
+        .keyBy( ApacheLogEvent::getUrl )
 
 
 
