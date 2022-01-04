@@ -3,12 +3,25 @@ package com.zhbeii.hotitems_analysis;/*
 @date 2022/1/3 - 20:39
 */
 
+import com.sun.org.apache.xml.internal.resolver.helpers.PublicId;
 import com.zhbeii.hotitems_analysis.beans.ItemViewCount;
 import com.zhbeii.hotitems_analysis.beans.UserBehavior;
+import org.apache.flink.api.common.functions.AggregateFunction;
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
+import org.apache.flink.api.java.tuple.Tuple;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.timestamps.AscendingTimestampExtractor;
+import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+import org.apache.flink.util.Collector;
+
+import java.util.ArrayList;
 
 public class HotItems {
     public static void main(String[] args) throws Exception{
@@ -47,9 +60,90 @@ public class HotItems {
 
         //4. 分组开窗聚合,得到每个商品内各个商品的count值
         DataStream<ItemViewCount> windowAggStream = dataStream
+                .filter( data -> "pv".equals(data.getBehavior()))  //过滤pv
+        .keyBy("itemId")  // 按商品id分组
+        .timeWindow(Time.hours(1), Time.minutes(5))   //开一个滑动窗口
+        .aggregate(new ItemCountAgg(), new WindowItemCountResult());
+
+        //5. 收集同一窗口的的所有商品count数据,排序输出top n
+        DataStream<String> resultStream = windowAggStream
+                .keyBy("windowEnd")  //按照窗口分组
+                .process( new TopNHotItems(5)); //用自定义处理函数排序取前五
+
+        resultStream.print();
+
+
+        env.execute("hot items analysis");
+    }
+
+    //实现自定义增量聚合函数
+    public static class ItemCountAgg implements AggregateFunction <UserBehavior, Long, Long>{
+
+        @Override
+        public Long createAccumulator() {
+            return 0L;
+        }
+
+        @Override
+        public Long add(UserBehavior userBehavior, Long accumulator) {
+            return accumulator + 1;
+        }
+
+        @Override
+        public Long getResult(Long accumulator) {
+            return accumulator;
+        }
+
+        @Override
+        public Long merge(Long a, Long b) {
+            return a + b;
+        }
+    }
+
+    //自定义全窗口函数
+    public static class WindowItemCountResult implements WindowFunction<Long, ItemViewCount, Tuple, TimeWindow>{
+        @Override
+        public void apply(Tuple tuple, TimeWindow timeWindow, Iterable<Long> iterable, Collector<ItemViewCount> collector) throws Exception {
+            Long itemId = tuple.getField(0);
+            Long windowEnd = timeWindow.getEnd();
+            Long count = iterable.iterator().next();
+            collector.collect(new ItemViewCount(itemId, windowEnd, count));
+        }
+    }
 
 
 
+    //实现自定义的KeyProcessFunction
+    public static class TopNHotItems extends KeyedProcessFunction<Tuple, ItemViewCount, String>{
 
+        //定义属性,top n 的大小
+        private Integer topSize;
+
+        public TopNHotItems(Integer topSize) {
+            this.topSize = topSize;
+        }
+
+        //定义列表状态,保存当前的窗口内所有输出的ItenViewCount
+        ListState<ItemViewCount> itemViewCountListState;
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            itemViewCountListState = getRuntimeContext().getListState(new ListStateDescriptor<ItemViewCount>("item-view-count-list", ItemViewCount.class));
+
+        }
+
+        @Override
+        public void processElement(ItemViewCount value, Context ctx, Collector<String> collector) throws Exception {
+            //m每来一条数据,存入list中, 并注册定时器,
+            itemViewCountListState.add(value);
+            ctx.timerService().registerEventTimeTimer( value.getWindowEnd() + 1);
+
+        }
+
+        @Override
+        public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+            //定时触发器,当前已收集到所有数据,排序输出
+
+        }
     }
 }
