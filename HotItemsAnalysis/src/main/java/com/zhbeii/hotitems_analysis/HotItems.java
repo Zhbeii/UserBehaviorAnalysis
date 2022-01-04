@@ -3,7 +3,7 @@ package com.zhbeii.hotitems_analysis;/*
 @date 2022/1/3 - 20:39
 */
 
-import com.sun.org.apache.xml.internal.resolver.helpers.PublicId;
+//import com.sun.org.apache.xml.internal.resolver.helpers.PublicId; //中文编码
 import com.zhbeii.hotitems_analysis.beans.ItemViewCount;
 import com.zhbeii.hotitems_analysis.beans.UserBehavior;
 import org.apache.commons.compress.utils.Lists;
@@ -22,6 +22,7 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Comparator;
 
@@ -153,6 +154,27 @@ public class HotItems {
                     return o2.getCount().intValue() - o1.getCount().intValue();
                 }
             });
+
+            //将排名信息格式化为String,方便打印输出
+            StringBuilder resultBuilder = new StringBuilder();
+            resultBuilder.append("===================");
+            resultBuilder.append("窗口结束时间").append( new Timestamp(timestamp - 1)).append("\n");
+
+            //遍历列表,取top n 输出
+            for(int i = 0; i < Math.min(topSize,itemViewCounts.size()); i++){
+                ItemViewCount currentItemViewCount = itemViewCounts.get(i);
+                resultBuilder.append("No").append(i + 1).append(":")
+                        .append("商品ID = ").append(currentItemViewCount.getItemId())
+                        .append("热门度").append(currentItemViewCount.getCount())
+                        .append("\n");
+            }
+            resultBuilder.append("=====================\n\n");
+
+
+            //控制输出频率
+            Thread.sleep(1000L);
+
+            out.collect(resultBuilder.toString());
         }
     }
 }
